@@ -7,6 +7,7 @@ contextBridge.exposeInMainWorld("autorecipe", {
   status: () => ipcRenderer.invoke("autorecipe:status"),
   inspector: () => ipcRenderer.invoke("autorecipe:inspector"),
   listRuns: () => ipcRenderer.invoke("autorecipe:runs:list"),
+  getLearned: (payload?: { runId?: string }) => ipcRenderer.invoke("autorecipe:learned:get", payload || {}),
   openPath: (path: string) => ipcRenderer.invoke("autorecipe:open-path", path),
   setExplorationVisible: (visible: boolean) => ipcRenderer.invoke("ui:set-exploration-visible", visible),
   setWorkspaceExpanded: (expanded: boolean) => ipcRenderer.invoke("ui:set-workspace-expanded", expanded),

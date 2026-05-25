@@ -1,4 +1,5 @@
 import path from "node:path";
+import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { app, BrowserWindow, ipcMain, Menu, nativeTheme, shell, type MenuItemConstructorOptions } from "electron";
 import { DesktopBrowserRuntime } from "@autorecipe/browser-runtime";
@@ -41,6 +42,7 @@ async function bootstrap(): Promise<void> {
 function installAppIpc(): void {
   ipcMain.handle("autorecipe:inspector", async () => runtimeInspector());
   ipcMain.handle("autorecipe:runs:list", async () => listRuns());
+  ipcMain.handle("autorecipe:learned:get", async (_event, payload: { runId?: string } = {}) => getLearnedArtifacts(payload?.runId));
   ipcMain.handle("autorecipe:open-path", async (_event, filePath: string) => openPath(filePath));
   ipcMain.handle("ui:set-exploration-visible", async (_event, visible: boolean) => {
     runtime?.setExplorationVisible(Boolean(visible));
@@ -164,11 +166,141 @@ async function listRuns(): Promise<Record<string, unknown>> {
   };
 }
 
+async function getLearnedArtifacts(inputRunId?: string): Promise<Record<string, unknown>> {
+  if (!runtime) return { success: false, error: "runtime is not ready" };
+  const runs = await runtime.store.listRuns();
+  const selected = String(inputRunId || "").trim();
+  const run = selected
+    ? runs.find((item) => item.run_id === selected)
+    : runs.at(-1);
+  if (!run) {
+    return {
+      success: true,
+      runId: "",
+      title: "No learned artifacts yet",
+      counts: { pages: 0, modules: 0, requests: 0, rules: 0, recipeSteps: 0 },
+      pages: [],
+      modules: [],
+      requests: [],
+      rules: [],
+      recipe: null,
+    };
+  }
+
+  const [pageMap, businessCatalog, requestCatalog, actionRules, recipePack, summary] = await Promise.all([
+    loadArtifact(run.run_id, "page_map"),
+    loadArtifact(run.run_id, "business_catalog"),
+    loadArtifact(run.run_id, "request_catalog"),
+    loadArtifact(run.run_id, "action_rules"),
+    loadArtifact(run.run_id, "recipe_pack"),
+    loadArtifact(run.run_id, "summary"),
+  ]);
+  const pages = records(pageMap.pages).map((page) => ({
+    id: text(page.page_id),
+    url: text(page.page_url),
+    type: text(page.page_type || "page"),
+    description: text(page.page_description),
+    regions: stringList(page.regions).slice(0, 6),
+    heatZones: records(page.heat_zones).length,
+    requests: numberValue(page.request_count),
+  }));
+  const modules = records(businessCatalog.modules).map((module) => ({
+    id: text(module.module_id),
+    title: text(module.title || module.module_id),
+    sourceRegion: text(module.source_region),
+    pages: stringList(module.pages).length,
+    actions: records(module.actions).map((action) => text(action.label)).filter(Boolean).slice(0, 6),
+    requests: stringList(module.request_signatures).length,
+  }));
+  const requests = records(requestCatalog.requests).map((request) => ({
+    signature: text(request.signature),
+    method: text(request.method).toUpperCase(),
+    host: text(request.host),
+    path: text(request.path_template || request.path),
+    category: text(request.request_category || "business"),
+    occurrence: numberValue(request.occurrence),
+    status: numberValue(request.status_code),
+  }));
+  const rules = records(actionRules.rules).map((rule) => ({
+    id: text(rule.rule_id),
+    action: text(rule.canonical_action),
+    page: text(rule.current_page || rule.entry_page),
+    effect: text(rule.effect),
+    risk: text(rule.risk_level || "low"),
+    success: stringList(rule.success_criteria).slice(0, 4),
+  }));
+  const recipeSteps = records(recipePack.steps);
+
+  return {
+    success: true,
+    runId: run.run_id,
+    systemKey: run.system_key,
+    targetUrl: run.entry_url || run.url,
+    currentUrl: run.current_url || run.url,
+    updatedAt: run.updated_at,
+    runDir: runtime.store.runDir(run.run_id),
+    title: text(recipePack.title || run.system_key),
+    counts: {
+      pages: pages.length,
+      modules: modules.length,
+      requests: requests.length,
+      rules: rules.length,
+      recipeSteps: recipeSteps.length,
+      screenshots: numberValue(record(summary.counts).screenshots),
+      actions: numberValue(record(summary.counts).actions || recipeSteps.length),
+    },
+    pages: pages.slice(0, 12),
+    modules: modules.slice(0, 12),
+    requests: requests.slice(0, 16),
+    rules: rules.slice(0, 16),
+    recipe: {
+      id: text(recipePack.recipe_id),
+      title: text(recipePack.title),
+      description: text(recipePack.description),
+      steps: recipeSteps.map((step) => ({
+        action: text(step.action),
+        page: text(step.page),
+        text: text(step.text || step.semantic_action || step.element_id),
+        region: text(step.region),
+      })).slice(0, 12),
+    },
+  };
+}
+
 async function openPath(filePath: string): Promise<Record<string, unknown>> {
   const target = String(filePath || "").trim();
   if (!target) return { success: false, error: "path is empty" };
   const error = await shell.openPath(target);
   return error ? { success: false, error } : { success: true, path: target };
+}
+
+async function loadArtifact(runId: string, artifactType: string): Promise<Record<string, unknown>> {
+  if (!runtime) return {};
+  try {
+    return JSON.parse(await readFile(runtime.store.artifactPath(runId, artifactType), "utf8")) as Record<string, unknown>;
+  } catch {
+    return {};
+  }
+}
+
+function record(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
+}
+
+function records(value: unknown): Array<Record<string, unknown>> {
+  return Array.isArray(value) ? value.filter((item) => item && typeof item === "object") as Array<Record<string, unknown>> : [];
+}
+
+function stringList(value: unknown): string[] {
+  return Array.isArray(value) ? value.map((item) => text(item)).filter(Boolean) : [];
+}
+
+function text(value: unknown): string {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function numberValue(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value) ? value : 0;
 }
 
 function normalizeThemeChoice(value: string): "system" | "light" | "dark" {

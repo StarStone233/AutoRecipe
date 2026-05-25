@@ -206,6 +206,11 @@
         background: var(--panel-muted);
       }
 
+      .runCard[aria-selected="true"] {
+        border-color: var(--accent);
+        box-shadow: inset 3px 0 0 var(--accent);
+      }
+
       .runTitle {
         font-weight: 650;
         overflow-wrap: anywhere;
@@ -238,6 +243,85 @@
         border-radius: 7px;
         color: var(--muted);
         background: var(--panel-muted);
+      }
+
+      .learnedHeader {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+        margin-bottom: 8px;
+      }
+
+      .learnedTitle {
+        min-width: 0;
+        font-size: 13px;
+        font-weight: 700;
+        overflow-wrap: anywhere;
+      }
+
+      .learnedGrid {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 6px;
+        margin-bottom: 10px;
+      }
+
+      .learnedCount {
+        min-width: 0;
+        padding: 7px;
+        border: 1px solid var(--line);
+        border-radius: 7px;
+        background: var(--panel-muted);
+      }
+
+      .learnedCount strong {
+        display: block;
+        font-size: 15px;
+      }
+
+      .learnedCount span {
+        display: block;
+        margin-top: 2px;
+        color: var(--muted);
+        font-size: 11px;
+      }
+
+      .learnedGroup {
+        margin-top: 10px;
+      }
+
+      .learnedGroupTitle {
+        margin-bottom: 5px;
+        font-size: 11px;
+        font-weight: 700;
+        color: var(--muted);
+      }
+
+      .learnedList {
+        display: grid;
+        gap: 6px;
+      }
+
+      .learnedItem {
+        min-width: 0;
+        padding: 8px;
+        border: 1px solid var(--line);
+        border-radius: 7px;
+        background: var(--panel-muted);
+      }
+
+      .learnedItemTitle {
+        font-size: 13px;
+        font-weight: 650;
+        overflow-wrap: anywhere;
+      }
+
+      .learnedItemMeta {
+        margin-top: 3px;
+        color: var(--muted);
+        font-size: 12px;
+        overflow-wrap: anywhere;
       }
 
       @media (max-width: 860px) {
@@ -298,6 +382,14 @@
           <section class="section">
             <div class="sectionTitle">Latest Runs</div>
             <div id="runList" class="runList"></div>
+          </section>
+
+          <section class="section">
+            <div class="learnedHeader">
+              <div class="sectionTitle">Learned</div>
+              <button id="openRunDirBtn" type="button" disabled>Open Folder</button>
+            </div>
+            <div id="learnedPanel"></div>
           </section>
 
           <section class="section">

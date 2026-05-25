@@ -14,6 +14,7 @@ test("desktop shell is a standalone AutoRecipe app", () => {
   assert.match(html, /id="openBtn"/);
   assert.match(html, /id="startBtn"/);
   assert.match(html, /id="stopBtn"/);
+  assert.match(html, /id="learnedPanel"/);
   assert.doesNotMatch(html, /Corevo|clientSecret|personal-clients|sandbox\.exec|Docker/);
 });
 
@@ -24,6 +25,20 @@ test("desktop uses split app and capture preload scripts", () => {
   assert.match(runtime, /capturePreloadPath: string/);
   assert.match(appPreload, /contextBridge\.exposeInMainWorld\("autorecipe"/);
   assert.doesNotMatch(capturePreload, /contextBridge\.exposeInMainWorld/);
+});
+
+test("desktop exposes a learned artifact display layer", () => {
+  const renderer = readFileSync(join(import.meta.dirname, "../src/renderer.ts"), "utf8");
+  assert.match(main, /ipcMain\.handle\("autorecipe:learned:get"/);
+  assert.match(main, /async function getLearnedArtifacts/);
+  assert.match(appPreload, /getLearned:\s*\(payload\?: \{ runId\?: string \}\)/);
+  assert.match(renderer, /const learnedPanel = document\.querySelector<HTMLElement>\("#learnedPanel"\)!/);
+  assert.match(renderer, /function renderLearned/);
+  assert.match(renderer, /appendLearnedGroup\("Pages"/);
+  assert.match(renderer, /appendLearnedGroup\("Modules"/);
+  assert.match(renderer, /appendLearnedGroup\("Requests"/);
+  assert.match(renderer, /appendLearnedGroup\("Rules"/);
+  assert.match(renderer, /appendLearnedGroup\("Recipe"/);
 });
 
 test("desktop is not a SaaS connector or shell executor", () => {
