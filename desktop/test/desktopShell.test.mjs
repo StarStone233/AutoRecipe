@@ -31,9 +31,15 @@ test("desktop exposes a learned artifact display layer", () => {
   const renderer = readFileSync(join(import.meta.dirname, "../src/renderer.ts"), "utf8");
   assert.match(main, /ipcMain\.handle\("autorecipe:learned:get"/);
   assert.match(main, /async function getLearnedArtifacts/);
+  assert.match(main, /async function learnedPreview/);
+  assert.match(main, /pathToFileURL/);
   assert.match(appPreload, /getLearned:\s*\(payload\?: \{ runId\?: string \}\)/);
   assert.match(renderer, /const learnedPanel = document\.querySelector<HTMLElement>\("#learnedPanel"\)!/);
   assert.match(renderer, /function renderLearned/);
+  assert.match(renderer, /function renderPreview/);
+  assert.match(renderer, /function appendOverlay/);
+  assert.match(html, /\.previewStage/);
+  assert.match(html, /\.overlayBox/);
   assert.match(renderer, /appendLearnedGroup\("Pages"/);
   assert.match(renderer, /appendLearnedGroup\("Modules"/);
   assert.match(renderer, /appendLearnedGroup\("Requests"/);

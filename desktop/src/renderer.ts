@@ -207,6 +207,7 @@ function renderLearned(payload: Record<string, unknown>): void {
   title.className = "learnedTitle";
   title.textContent = String(payload.title || payload.systemKey || selectedRunId);
   learnedPanel.appendChild(title);
+  renderPreview(toRecord(payload.preview));
 
   const counts = toRecord(payload.counts);
   const grid = document.createElement("div");
@@ -259,6 +260,62 @@ function renderLearned(payload: Record<string, unknown>): void {
   }));
 }
 
+function renderPreview(preview: Record<string, unknown>): void {
+  const frame = document.createElement("div");
+  frame.className = "previewFrame";
+  const screenshotUrl = String(preview.screenshotUrl || "");
+  if (!screenshotUrl) {
+    const empty = document.createElement("div");
+    empty.className = "previewEmpty";
+    empty.textContent = "Start capture to create a screenshot preview with overlays.";
+    frame.appendChild(empty);
+    learnedPanel.appendChild(frame);
+    return;
+  }
+
+  const image = document.createElement("img");
+  image.src = screenshotUrl;
+  image.alt = "Captured page preview";
+  const stage = document.createElement("div");
+  stage.className = "previewStage";
+  stage.appendChild(image);
+
+  for (const region of listRecords(preview.regions)) {
+    appendOverlay(stage, toRecord(region.bbox), String(region.label || "region"), "region");
+  }
+  for (const zone of listRecords(preview.heatZones)) {
+    appendOverlay(stage, toRecord(zone.bbox), String(zone.label || zone.region || "action"), "heat");
+  }
+  frame.appendChild(stage);
+
+  const caption = document.createElement("div");
+  caption.className = "previewCaption";
+  const heatCount = listRecords(preview.heatZones).length;
+  caption.textContent = `${String(preview.mode || "artifact")} preview · ${heatCount} overlays · ${String(preview.pageUrl || "")}`;
+  frame.appendChild(caption);
+  learnedPanel.appendChild(frame);
+}
+
+function appendOverlay(frame: HTMLElement, bbox: Record<string, unknown>, label: string, kind: "heat" | "region"): void {
+  const x = pct(bbox.x);
+  const y = pct(bbox.y);
+  const width = Math.max(2, pct(bbox.width));
+  const height = Math.max(2, pct(bbox.height));
+  if (width <= 0 || height <= 0) return;
+  const box = document.createElement("div");
+  box.className = "overlayBox";
+  box.dataset.kind = kind;
+  box.style.left = `${x}%`;
+  box.style.top = `${y}%`;
+  box.style.width = `${width}%`;
+  box.style.height = `${height}%`;
+  const tag = document.createElement("div");
+  tag.className = "overlayLabel";
+  tag.textContent = label;
+  box.appendChild(tag);
+  frame.appendChild(box);
+}
+
 function appendLearnedGroup(
   title: string,
   rows: Array<Record<string, unknown>>,
@@ -309,6 +366,10 @@ function toRecord(value: unknown): Record<string, unknown> {
 
 function listRecords(value: unknown): Array<Record<string, unknown>> {
   return Array.isArray(value) ? value.filter((item) => item && typeof item === "object") as Array<Record<string, unknown>> : [];
+}
+
+function pct(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value) ? Math.max(0, Math.min(100, value)) : 0;
 }
 
 function applyTheme(theme: "light" | "dark"): void {

@@ -1,6 +1,6 @@
 import path from "node:path";
 import { readFile } from "node:fs/promises";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { app, BrowserWindow, ipcMain, Menu, nativeTheme, shell, type MenuItemConstructorOptions } from "electron";
 import { DesktopBrowserRuntime } from "@autorecipe/browser-runtime";
 import { buildMiningInspector } from "./autorecipeInspector.js";
@@ -168,11 +168,14 @@ async function listRuns(): Promise<Record<string, unknown>> {
 
 async function getLearnedArtifacts(inputRunId?: string): Promise<Record<string, unknown>> {
   if (!runtime) return { success: false, error: "runtime is not ready" };
+  const active = runtime.capture.active()[0];
   const runs = await runtime.store.listRuns();
   const selected = String(inputRunId || "").trim();
   const run = selected
     ? runs.find((item) => item.run_id === selected)
-    : runs.at(-1);
+    : active
+      ? runs.find((item) => item.run_id === active.runId) || runs.at(-1)
+      : runs.at(-1);
   if (!run) {
     return {
       success: true,
@@ -203,6 +206,7 @@ async function getLearnedArtifacts(inputRunId?: string): Promise<Record<string, 
     regions: stringList(page.regions).slice(0, 6),
     heatZones: records(page.heat_zones).length,
     requests: numberValue(page.request_count),
+    screenshotPath: latestScreenshotPath(page),
   }));
   const modules = records(businessCatalog.modules).map((module) => ({
     id: text(module.module_id),
@@ -240,6 +244,7 @@ async function getLearnedArtifacts(inputRunId?: string): Promise<Record<string, 
     updatedAt: run.updated_at,
     runDir: runtime.store.runDir(run.run_id),
     title: text(recipePack.title || run.system_key),
+    preview: await learnedPreview(run.run_id, pageMap),
     counts: {
       pages: pages.length,
       modules: modules.length,
@@ -264,6 +269,72 @@ async function getLearnedArtifacts(inputRunId?: string): Promise<Record<string, 
         region: text(step.region),
       })).slice(0, 12),
     },
+  };
+}
+
+async function learnedPreview(runId: string, pageMap: Record<string, unknown>): Promise<Record<string, unknown>> {
+  const pages = records(pageMap.pages);
+  const pageWithShot = pages.find((page) => latestScreenshotPath(page))
+    || pages.find((page) => records(page.heat_zones).length)
+    || pages[0];
+  if (pageWithShot) {
+    const screenshotPath = latestScreenshotPath(pageWithShot);
+    return {
+      mode: "artifact",
+      pageId: text(pageWithShot.page_id),
+      pageUrl: text(pageWithShot.page_url),
+      screenshotPath,
+      screenshotUrl: fileUrl(screenshotPath),
+      heatZones: records(pageWithShot.heat_zones).map((zone) => ({
+        label: stringList(zone.top_labels)[0] || text(zone.region) || "action",
+        region: text(zone.region),
+        count: numberValue(zone.event_count),
+        bbox: record(zone.bbox_pct),
+      })).slice(0, 16),
+      regions: records(pageWithShot.region_partitions).map((region) => ({
+        label: text(region.region),
+        bbox: {
+          x: numberValue(region.x_pct),
+          y: numberValue(region.y_pct),
+          width: numberValue(region.width_pct),
+          height: numberValue(region.height_pct),
+        },
+      })).slice(0, 10),
+    };
+  }
+
+  const events = await runtime?.store.loadEvents(runId).catch(() => []) || [];
+  const parsed = events.map((item) => record(item));
+  const latestShot = [...parsed].reverse().find((event) => text(record(event.payload).storage_ref));
+  const screenshotPath = text(record(latestShot?.payload).storage_ref);
+  const actions = parsed
+    .filter((event) => /^ui_/.test(text(event.event_type)))
+    .map((event) => {
+      const payload = record(event.payload);
+      const xPct = numberValue(payload.x_pct);
+      const yPct = numberValue(payload.y_pct);
+      if (!xPct && !yPct) return undefined;
+      return {
+        label: text(payload.label || payload.text || event.event_type) || "action",
+        region: text(payload.region || "main_content"),
+        count: 1,
+        bbox: {
+          x: Math.max(0, xPct - 3),
+          y: Math.max(0, yPct - 3),
+          width: 6,
+          height: 6,
+        },
+      };
+    })
+    .filter(Boolean)
+    .slice(-16);
+  return {
+    mode: "live",
+    pageUrl: text(record(latestShot?.payload).page_url || latestShot?.url),
+    screenshotPath,
+    screenshotUrl: fileUrl(screenshotPath),
+    heatZones: actions,
+    regions: [],
   };
 }
 
@@ -301,6 +372,15 @@ function text(value: unknown): string {
 
 function numberValue(value: unknown): number {
   return typeof value === "number" && Number.isFinite(value) ? value : 0;
+}
+
+function latestScreenshotPath(page: Record<string, unknown>): string {
+  const screenshots = records(page.screenshot_refs);
+  return text(screenshots.at(-1)?.path || screenshots.at(-1)?.ref);
+}
+
+function fileUrl(filePath: string): string {
+  return filePath ? pathToFileURL(filePath).toString() : "";
 }
 
 function normalizeThemeChoice(value: string): "system" | "light" | "dark" {
