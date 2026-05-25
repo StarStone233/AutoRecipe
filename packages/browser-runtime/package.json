@@ -1,0 +1,20 @@
+{
+  "name": "@autorecipe/browser-runtime",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "npm run build && node --test test/*.test.mjs"
+  },
+  "dependencies": {
+    "@autorecipe/capture-core": "0.1.0",
+    "@autorecipe/knowledge-core": "0.1.0",
+    "electron": "^42.1.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.8.3"
+  }
+}

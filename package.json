@@ -1,0 +1,29 @@
+{
+  "name": "autorecipe",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Local-first browser mining toolkit that turns user workflows into maps, request catalogs, and runnable recipes.",
+  "workspaces": [
+    "desktop",
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "npm --workspace @autorecipe/knowledge-core run build && npm --workspace @autorecipe/capture-core run build && npm --workspace @autorecipe/browser-runtime run build && npm --workspace @autorecipe/runner-core run build && npm --workspace @autorecipe/desktop run build",
+    "typecheck": "npm run build && npm --workspace @autorecipe/knowledge-core run typecheck && npm --workspace @autorecipe/capture-core run typecheck && npm --workspace @autorecipe/browser-runtime run typecheck && npm --workspace @autorecipe/runner-core run typecheck && npm --workspace @autorecipe/desktop run typecheck",
+    "test": "npm --workspace @autorecipe/knowledge-core run test && npm --workspace @autorecipe/capture-core run test && npm --workspace @autorecipe/browser-runtime run test && npm --workspace @autorecipe/runner-core run test && npm --workspace @autorecipe/desktop run test",
+    "desktop:dev": "npm --workspace @autorecipe/desktop run dev",
+    "desktop:start": "npm --workspace @autorecipe/desktop run start"
+  },
+  "keywords": [
+    "browser-automation",
+    "electron",
+    "playwright",
+    "workflow-mining",
+    "recipe-runner"
+  ],
+  "license": "MIT",
+  "devDependencies": {
+    "@types/node": "^22.15.3",
+    "typescript": "^5.8.3"
+  }
+}

@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AutoRecipe popup capture demo</title>
+  <style>
+    body {
+      margin: 24px;
+      font-family: system-ui, sans-serif;
+      color: #17202a;
+    }
+    main {
+      display: grid;
+      gap: 16px;
+      max-width: 760px;
+    }
+    label {
+      display: grid;
+      gap: 6px;
+    }
+    input, button {
+      border: 1px solid #ccd4dd;
+      border-radius: 6px;
+      font: inherit;
+      padding: 8px 10px;
+    }
+    button {
+      cursor: pointer;
+      width: max-content;
+    }
+    #results, #selection {
+      border: 1px solid #ccd4dd;
+      border-radius: 8px;
+      min-height: 52px;
+      padding: 12px;
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>AutoRecipe popup capture demo</h1>
+    <label>
+      Search query
+      <input id="query" name="query" autocomplete="off" value="quarterly report">
+    </label>
+    <button id="search">Search</button>
+    <section id="results" aria-live="polite">No results yet.</section>
+    <button id="choose">Choose in popup</button>
+    <section id="selection" aria-live="polite">No popup selection yet.</section>
+  </main>
+
+  <script>
+    const results = document.querySelector('#results');
+    const selection = document.querySelector('#selection');
+
+    async function search() {
+      const keyword = document.querySelector('#query').value;
+      await fetch('/api/search', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          keyword,
+          pageNo: 1,
+          pageSize: 10,
+          password: 'must-not-be-captured'
+        })
+      }).catch(() => undefined);
+      results.textContent = `Results refreshed for "${keyword}".`;
+    }
+
+    document.querySelector('#search').addEventListener('click', search);
+
+    document.querySelector('#choose').addEventListener('click', () => {
+      const popup = window.open('', 'autorecipe-popup-demo', 'width=420,height=360');
+      popup.document.write(`<!doctype html>
+        <html lang="en">
+          <head><meta charset="utf-8"><title>Popup selector</title></head>
+          <body>
+            <h2>Popup selector</h2>
+            <button id="select">Select ACME</button>
+            <script>
+              document.querySelector('#select').addEventListener('click', async () => {
+                await fetch('/api/popup/select', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ customerId: 'acme-001', token: 'must-not-be-captured' })
+                }).catch(() => undefined);
+                window.opener.postMessage({ type: 'popup-selection', value: 'ACME' }, '*');
+                window.close();
+              });
+            <\/script>
+          </body>
+        </html>`);
+      popup.document.close();
+    });
+
+    window.addEventListener('message', async (event) => {
+      if (event.data?.type !== 'popup-selection') return;
+      await fetch('/api/search/refresh-after-popup', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ selection: event.data.value, accessToken: 'must-not-be-captured' })
+      }).catch(() => undefined);
+      selection.textContent = `Popup selected ${event.data.value}.`;
+    });
+  </script>
+</body>
+</html>

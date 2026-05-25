@@ -1,0 +1,21 @@
+{
+  "name": "@autorecipe/desktop",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "dist/main.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.json && node scripts/copy-assets.mjs",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "npm run build && node --test test/*.test.mjs",
+    "dev": "npm run build && electron .",
+    "start": "electron ."
+  },
+  "dependencies": {
+    "@autorecipe/browser-runtime": "0.1.0",
+    "@autorecipe/runner-core": "0.1.0",
+    "electron": "^42.1.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.8.3"
+  }
+}

@@ -1,0 +1,46 @@
+{
+  "schema_version": "runner_pack_v1",
+  "intent": "bing.search",
+  "title": "Bing Search",
+  "entry_url": "https://cn.bing.com/",
+  "params": {
+    "query": {
+      "type": "string",
+      "required": true,
+      "description": "Search query text."
+    }
+  },
+  "steps": [
+    {
+      "action": "fill_text",
+      "target": "search_box",
+      "value": "{{query}}",
+      "timeout_ms": 15000,
+      "locators": [
+        { "strategy": "css", "selector": "input[name=\"q\"]" },
+        { "strategy": "css", "selector": "textarea[name=\"q\"]" },
+        { "strategy": "role", "role": "textbox" }
+      ]
+    },
+    {
+      "action": "key_press",
+      "target": "search_box",
+      "key": "Enter",
+      "timeout_ms": 15000,
+      "locators": [
+        { "strategy": "css", "selector": "input[name=\"q\"]" },
+        { "strategy": "css", "selector": "textarea[name=\"q\"]" },
+        { "strategy": "role", "role": "textbox" }
+      ]
+    },
+    {
+      "action": "wait_for_url",
+      "target": "results_page",
+      "value": "**/search**",
+      "timeout_ms": 20000
+    }
+  ],
+  "success": [
+    { "type": "url_contains", "value": "/search" }
+  ]
+}
