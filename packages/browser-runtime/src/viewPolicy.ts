@@ -2,6 +2,7 @@ export const PERSONAL_RAIL_WIDTH = 64;
 export const PERSONAL_SIDEBAR_WIDTH = 430;
 export const PERSONAL_COLLAPSED_WINDOW_WIDTH = 460;
 export const PERSONAL_EXPANDED_WINDOW_WIDTH = 1320;
+export const APP_TOOLBAR_HEIGHT = 56;
 export const BUSINESS_VIEW_STABLE_ZOOM = 1;
 export const PERFORMANCE_CAPTURE_POLICY = {
   snapshotIntervalMs: 30000,
@@ -47,9 +48,9 @@ export function businessViewBounds(input: BusinessViewBoundsInput): BusinessView
   const sideWidth = input.sidebarExpanded ? PERSONAL_SIDEBAR_WIDTH : PERSONAL_RAIL_WIDTH;
   return {
     x: sideWidth,
-    y: 0,
+    y: APP_TOOLBAR_HEIGHT,
     width: Math.max(100, input.width - sideWidth),
-    height: Math.max(100, input.height),
+    height: Math.max(100, input.height - APP_TOOLBAR_HEIGHT),
   };
 }
 

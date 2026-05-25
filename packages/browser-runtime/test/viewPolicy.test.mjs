@@ -12,9 +12,9 @@ import {
 test("keeps business view width stable beside the personal sidebar", () => {
   assert.deepEqual(businessViewBounds({ width: 1320, height: 780, visible: true, sidebarExpanded: true }), {
     x: 430,
-    y: 0,
+    y: 56,
     width: 890,
-    height: 780,
+    height: 724,
   });
   assert.deepEqual(businessViewBounds({ width: 460, height: 780, visible: false, sidebarExpanded: false }), {
     x: 0,
@@ -27,10 +27,16 @@ test("keeps business view width stable beside the personal sidebar", () => {
 test("uses only the rail width when AutoRecipe controls are collapsed", () => {
   assert.deepEqual(businessViewBounds({ width: 1320, height: 780, visible: true, sidebarExpanded: false }), {
     x: 64,
-    y: 0,
+    y: 56,
     width: 1256,
-    height: 780,
+    height: 724,
   });
+});
+
+test("keeps the browser view below the app toolbar", () => {
+  const bounds = businessViewBounds({ width: 1320, height: 780, visible: true, sidebarExpanded: true });
+  assert.equal(bounds.y > 0, true);
+  assert.equal(bounds.y + bounds.height <= 780, true);
 });
 
 test("uses a stable page zoom instead of resizing zoom with the window", () => {
