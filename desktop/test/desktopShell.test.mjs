@@ -38,8 +38,11 @@ test("desktop exposes a learned artifact display layer", () => {
   assert.match(renderer, /function renderLearned/);
   assert.match(renderer, /function renderPreview/);
   assert.match(renderer, /function appendOverlay/);
+  assert.match(main, /viewportBbox/);
+  assert.match(main, /records\(pageMap\.surfaces\)/);
   assert.match(html, /\.previewStage/);
   assert.match(html, /\.overlayBox/);
+  assert.match(renderer, /appendLearnedGroup\("Surfaces"/);
   assert.match(renderer, /appendLearnedGroup\("Pages"/);
   assert.match(renderer, /appendLearnedGroup\("Modules"/);
   assert.match(renderer, /appendLearnedGroup\("Requests"/);

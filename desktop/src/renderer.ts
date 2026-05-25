@@ -213,12 +213,11 @@ function renderLearned(payload: Record<string, unknown>): void {
   const grid = document.createElement("div");
   grid.className = "learnedGrid";
   [
+    ["Surfaces", counts.surfaces],
     ["Pages", counts.pages],
-    ["Modules", counts.modules],
+    ["Actions", counts.actions],
     ["Requests", counts.requests],
-    ["Rules", counts.rules],
     ["Steps", counts.recipeSteps],
-    ["Shots", counts.screenshots],
   ].forEach(([label, value]) => {
     const cell = document.createElement("div");
     cell.className = "learnedCount";
@@ -231,6 +230,15 @@ function renderLearned(payload: Record<string, unknown>): void {
   });
   learnedPanel.appendChild(grid);
 
+  appendLearnedGroup("Surfaces", listRecords(payload.surfaces), (surface) => ({
+    title: `${String(surface.label || surface.kind || "surface")} · ${String(surface.kind || "")}`.trim(),
+    meta: [
+      surface.actions ? `${surface.actions} actions` : "",
+      surface.requests ? `${surface.requests} requests` : "",
+      surface.heatZones ? `${surface.heatZones} zones` : "",
+      surface.pageUrl,
+    ].filter(Boolean).join(" · "),
+  }));
   appendLearnedGroup("Pages", listRecords(payload.pages), (page) => ({
     title: String(page.id || page.type || "page"),
     meta: [page.type, page.requests ? `${page.requests} requests` : "", page.heatZones ? `${page.heatZones} zones` : "", page.url].filter(Boolean).join(" · "),
@@ -291,7 +299,8 @@ function renderPreview(preview: Record<string, unknown>): void {
   const caption = document.createElement("div");
   caption.className = "previewCaption";
   const heatCount = listRecords(preview.heatZones).length;
-  caption.textContent = `${String(preview.mode || "artifact")} preview · ${heatCount} overlays · ${String(preview.pageUrl || "")}`;
+  const surface = [preview.surfaceLabel, preview.surfaceKind].filter(Boolean).join(" · ");
+  caption.textContent = `${String(preview.mode || "artifact")} preview · ${heatCount} overlays${surface ? ` · ${surface}` : ""} · ${String(preview.pageUrl || "")}`;
   frame.appendChild(caption);
   learnedPanel.appendChild(frame);
 }

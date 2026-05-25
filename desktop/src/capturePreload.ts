@@ -114,6 +114,8 @@ function elementPayload(target: EventTarget | null): Record<string, unknown> {
   const element = target instanceof Element ? target : null;
   if (!element) return {};
   const rect = element.getBoundingClientRect();
+  const surface = detectPageSurface(element);
+  const surfaceRect = surface.element?.getBoundingClientRect() || viewportRect();
   const label = compactText(
     element.getAttribute("aria-label")
       || element.getAttribute("title")
@@ -139,6 +141,12 @@ function elementPayload(target: EventTarget | null): Record<string, unknown> {
     y_pct: window.innerHeight ? ((rect.top + rect.height / 2) / window.innerHeight) * 100 : 0,
     w_pct: window.innerWidth ? (rect.width / window.innerWidth) * 100 : 0,
     h_pct: window.innerHeight ? (rect.height / window.innerHeight) * 100 : 0,
+    viewport_bbox: pctBbox(rect, viewportRect()),
+    surface_id: surface.id,
+    surface_kind: surface.kind,
+    surface_label: surface.label,
+    surface_bbox_in_viewport: pctBbox(surfaceRect, viewportRect()),
+    surface_bbox: pctBbox(rect, surfaceRect),
     region,
     direct_text: directText(element),
   };
@@ -210,4 +218,128 @@ function inferLayoutRegions(): Array<Record<string, unknown>> {
     });
   }
   return rows;
+}
+
+type DetectedSurface = {
+  id: string;
+  kind: "primary_page" | "secondary_surface";
+  label: string;
+  element?: Element;
+};
+
+function detectPageSurface(element: Element): DetectedSurface {
+  const container = closestSurfaceContainer(element);
+  if (!container) {
+    return {
+      id: `primary:${pageId(location.href)}`,
+      kind: "primary_page",
+      label: document.title || location.hostname || "Primary page",
+    };
+  }
+  const label = compactText(
+    container.getAttribute("aria-label")
+      || container.getAttribute("aria-labelledby")
+      || container.getAttribute("data-testid")
+      || directText(container)
+      || container.getAttribute("role")
+      || "Secondary surface",
+    80,
+  );
+  return {
+    id: `surface:${pageId(location.href)}:${surfaceFingerprint(container, label)}`,
+    kind: "secondary_surface",
+    label,
+    element: container,
+  };
+}
+
+function closestSurfaceContainer(element: Element): Element | undefined {
+  const selectors = [
+    "dialog[open]",
+    "[role='dialog']",
+    "[popover]",
+    "[role='menu']",
+    "[role='listbox']",
+    "[role='tooltip']",
+    ".modal",
+    ".dialog",
+    ".drawer",
+    ".dropdown-menu",
+    ".popover",
+    ".menu",
+    "[data-surface]",
+    "[data-testid*='modal' i]",
+    "[data-testid*='dialog' i]",
+    "[data-testid*='drawer' i]",
+    "[data-testid*='dropdown' i]",
+    "[data-testid*='popover' i]",
+    "[data-testid*='menu' i]",
+  ];
+  for (let current: Element | null = element; current; current = current.parentElement) {
+    if (!isVisibleElement(current)) continue;
+    if (selectors.some((selector) => safeMatches(current, selector))) return current;
+  }
+  return undefined;
+}
+
+function safeMatches(element: Element, selector: string): boolean {
+  try {
+    return element.matches(selector);
+  } catch {
+    return false;
+  }
+}
+
+function isVisibleElement(element: Element): boolean {
+  const rect = element.getBoundingClientRect();
+  if (rect.width <= 0 || rect.height <= 0) return false;
+  const styles = window.getComputedStyle(element);
+  return styles.display !== "none" && styles.visibility !== "hidden" && Number(styles.opacity || 1) !== 0;
+}
+
+function viewportRect(): DOMRect {
+  return new DOMRect(0, 0, window.innerWidth || 1, window.innerHeight || 1);
+}
+
+function pctBbox(rect: DOMRect, scope: DOMRect): Record<string, number> {
+  const width = scope.width || 1;
+  const height = scope.height || 1;
+  return {
+    x: clampPct(((rect.left - scope.left) / width) * 100),
+    y: clampPct(((rect.top - scope.top) / height) * 100),
+    width: clampPct((rect.width / width) * 100),
+    height: clampPct((rect.height / height) * 100),
+  };
+}
+
+function clampPct(value: number): number {
+  if (!Number.isFinite(value)) return 0;
+  return Math.max(0, Math.min(100, Math.round(value * 100) / 100));
+}
+
+function surfaceFingerprint(element: Element, label: string): string {
+  const rect = element.getBoundingClientRect();
+  return normalizeId([
+    element.id,
+    element.getAttribute("data-testid"),
+    element.getAttribute("role"),
+    label,
+    Math.round(rect.left / 10) * 10,
+    Math.round(rect.top / 10) * 10,
+    Math.round(rect.width / 10) * 10,
+    Math.round(rect.height / 10) * 10,
+  ].filter(Boolean).join(":"));
+}
+
+function pageId(value: string): string {
+  try {
+    const url = new URL(value);
+    return normalizeId(`${url.hostname}${url.pathname || "/"}`);
+  } catch {
+    return "page";
+  }
+}
+
+function normalizeId(value: string): string {
+  return String(value || "surface").toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 80) || "surface";
 }

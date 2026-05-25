@@ -17,6 +17,8 @@ import {
   OperationManual,
   PageMapArtifact,
   PageMapPage,
+  PageSurface,
+  PercentBbox,
   RecipePack,
   RegionPartition,
   RequestRecord,
@@ -66,6 +68,11 @@ type ClickTrace = {
   y_pct: number;
   w_pct: number;
   h_pct: number;
+  surface_id: string;
+  surface_kind: PageSurface["surface_kind"];
+  surface_label: string;
+  surface_bbox: PercentBbox;
+  surface_bbox_in_viewport: PercentBbox;
   region_bbox: Record<string, number>;
   style_fingerprint: string;
   direct_text: string;
@@ -79,6 +86,20 @@ type RequestRecordDraft = Omit<RequestRecord, "page_urls"> & {
 };
 
 type HeatZone = PageMapPage["heat_zones"][number];
+type SurfaceHeatZone = PageSurface["heat_zones"][number];
+
+const TWO_LEVEL_PUBLIC_SUFFIXES = new Set([
+  "com.cn",
+  "net.cn",
+  "org.cn",
+  "gov.cn",
+  "edu.cn",
+  "co.uk",
+  "org.uk",
+  "com.au",
+  "net.au",
+  "co.jp",
+]);
 
 function tsMs(value: string | undefined, fallback: number): number {
   const parsed = Date.parse(String(value || ""));
@@ -87,6 +108,40 @@ function tsMs(value: string | undefined, fallback: number): number {
 
 function eventUrl(event: CaptureEvent): string {
   return String(event.payload.page_url || event.url || event.payload.document_url || "").trim();
+}
+
+function learningScopeFromRun(run: { target_host_suffix?: string; entry_url?: string; url?: string }): string {
+  const explicit = String(run.target_host_suffix || "").trim().toLowerCase();
+  if (explicit) return registrableDomainFromHost(explicit.replace(/^\./, ""));
+  return learningScopeFromUrl(run.entry_url || run.url || "");
+}
+
+function learningScopeFromUrl(value: string): string {
+  try {
+    return registrableDomainFromHost(new URL(value).hostname);
+  } catch {
+    return "";
+  }
+}
+
+function registrableDomainFromHost(host: string): string {
+  const normalized = String(host || "").trim().toLowerCase().replace(/\.$/, "");
+  if (!normalized || normalized === "localhost" || /^\d{1,3}(\.\d{1,3}){3}$/.test(normalized) || normalized.includes(":")) return normalized;
+  const parts = normalized.split(".").filter(Boolean);
+  if (parts.length <= 2) return normalized;
+  const suffix2 = parts.slice(-2).join(".");
+  if (TWO_LEVEL_PUBLIC_SUFFIXES.has(suffix2) && parts.length >= 3) return parts.slice(-3).join(".");
+  return suffix2;
+}
+
+function urlInLearningScope(value: string, scope: string): boolean {
+  if (!scope) return true;
+  try {
+    const host = new URL(value).hostname.toLowerCase();
+    return host === scope || host.endsWith(`.${scope}`);
+  } catch {
+    return false;
+  }
 }
 
 function querySample(url: URL): Record<string, string[]> {
@@ -371,6 +426,32 @@ function clampPct(value: number): number {
   return Math.max(0, Math.min(100, Math.round(value * 100) / 100));
 }
 
+function percentBboxFrom(value: unknown, fallback: PercentBbox): PercentBbox {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return fallback;
+  const row = value as Record<string, unknown>;
+  const width = clampPct(Number(row.width ?? row.w ?? fallback.width));
+  const height = clampPct(Number(row.height ?? row.h ?? fallback.height));
+  return {
+    x: clampPct(Number(row.x ?? fallback.x)),
+    y: clampPct(Number(row.y ?? fallback.y)),
+    width: width > 0 ? width : fallback.width,
+    height: height > 0 ? height : fallback.height,
+  };
+}
+
+function defaultActionSurfaceBbox(payload: Record<string, unknown>): PercentBbox {
+  const x = Number(payload.x_pct || 0);
+  const y = Number(payload.y_pct || 0);
+  const width = Number(payload.w_pct || 0) || 6;
+  const height = Number(payload.h_pct || 0) || 6;
+  return {
+    x: clampPct(x - width / 2),
+    y: clampPct(y - height / 2),
+    width: clampPct(width),
+    height: clampPct(height),
+  };
+}
+
 function regionForPoint(partitions: RegionPartition[], fallback: string, xPct: number, yPct: number): string {
   const match = partitions
     .filter((partition) => xPct >= partition.x_pct && xPct <= partition.x_pct + partition.width_pct && yPct >= partition.y_pct && yPct <= partition.y_pct + partition.height_pct)
@@ -447,6 +528,130 @@ function heatZoneFromCluster(pageId: string, cluster: ClickTrace[], partitions: 
     evidence_refs: uniqueSorted(cluster.flatMap((click) => click.evidence_refs)),
     confidence: Math.min(0.95, 0.55 + cluster.length * 0.12),
   };
+}
+
+function buildSurfaceHeatZones(surfaceId: string, clicks: ClickTrace[]): SurfaceHeatZone[] {
+  const clusters: Array<ClickTrace[]> = [];
+  const validClicks = clicks.filter((click) => click.surface_bbox.width > 0 && click.surface_bbox.height > 0);
+  for (const click of validClicks) {
+    const clickCenter = surfaceClickCenter(click);
+    const cluster = clusters.find((rows) => {
+      const center = surfaceClusterCenter(rows);
+      return Math.abs(center.x_pct - clickCenter.x_pct) <= 6 && Math.abs(center.y_pct - clickCenter.y_pct) <= 6;
+    });
+    if (cluster) cluster.push(click);
+    else clusters.push([click]);
+  }
+  return clusters
+    .sort((left, right) => right.length - left.length)
+    .map((cluster, index) => surfaceHeatZoneFromCluster(surfaceId, cluster, index));
+}
+
+function surfaceClickCenter(click: ClickTrace): { x_pct: number; y_pct: number } {
+  return {
+    x_pct: clampPct(click.surface_bbox.x + click.surface_bbox.width / 2),
+    y_pct: clampPct(click.surface_bbox.y + click.surface_bbox.height / 2),
+  };
+}
+
+function surfaceClusterCenter(rows: ClickTrace[]): { x_pct: number; y_pct: number } {
+  const total = Math.max(1, rows.length);
+  const centers = rows.map(surfaceClickCenter);
+  return {
+    x_pct: centers.reduce((sum, row) => sum + row.x_pct, 0) / total,
+    y_pct: centers.reduce((sum, row) => sum + row.y_pct, 0) / total,
+  };
+}
+
+function surfaceHeatZoneFromCluster(surfaceId: string, cluster: ClickTrace[], index: number): SurfaceHeatZone {
+  const center = surfaceClusterCenter(cluster);
+  const xValues = cluster.map((item) => item.surface_bbox.x);
+  const yValues = cluster.map((item) => item.surface_bbox.y);
+  const rightValues = cluster.map((item) => item.surface_bbox.x + item.surface_bbox.width);
+  const bottomValues = cluster.map((item) => item.surface_bbox.y + item.surface_bbox.height);
+  const minX = Math.min(...xValues);
+  const minY = Math.min(...yValues);
+  const maxX = Math.max(...rightValues);
+  const maxY = Math.max(...bottomValues);
+  const region = cluster[0]?.region || "main_content";
+  return {
+    zone_id: normalizeIdentifier(`surface_zone_${surfaceId}_${region}_${String(index + 1).padStart(3, "0")}`),
+    surface_id: surfaceId,
+    region,
+    center: {
+      x_pct: Math.round(center.x_pct * 100) / 100,
+      y_pct: Math.round(center.y_pct * 100) / 100,
+    },
+    bbox_pct: {
+      x: clampPct(minX),
+      y: clampPct(minY),
+      width: clampPct(maxX - minX),
+      height: clampPct(maxY - minY),
+    },
+    event_count: cluster.length,
+    action_types: uniqueSorted(cluster.flatMap((click) => eventAction(click.event_type))),
+    top_labels: topValues(cluster.map((click) => click.label).filter((label) => label && label !== "unknown"), 5),
+    request_signatures: uniqueSorted(cluster.flatMap((click) => click.request_signatures)),
+    evidence_refs: uniqueSorted(cluster.flatMap((click) => click.evidence_refs)),
+    confidence: Math.min(0.95, 0.55 + cluster.length * 0.12),
+  };
+}
+
+function buildPageSurfaces(pages: PageMapPage[], clicks: ClickTrace[], pageScreenshots: Map<string, string[]>): PageSurface[] {
+  const surfaces: PageSurface[] = [];
+  for (const page of pages) {
+    const pageClicks = clicks.filter((click) => click.page_url === page.page_url);
+    const primaryId = normalizeIdentifier(`primary:${page.page_id}`);
+    const primaryClicks = pageClicks.filter((click) => click.surface_kind === "primary_page" || click.surface_id === primaryId);
+    const primaryHeatZones = buildSurfaceHeatZones(primaryId, primaryClicks.map((click) => ({
+      ...click,
+      surface_id: primaryId,
+      surface_kind: "primary_page",
+      surface_label: "Primary page",
+      surface_bbox_in_viewport: { x: 0, y: 0, width: 100, height: 100 },
+      surface_bbox: {
+        x: clampPct(click.x_pct - (click.w_pct || 6) / 2),
+        y: clampPct(click.y_pct - (click.h_pct || 6) / 2),
+        width: clampPct(click.w_pct || 6),
+        height: clampPct(click.h_pct || 6),
+      },
+    })));
+    surfaces.push({
+      surface_id: primaryId,
+      surface_kind: "primary_page",
+      label: hostFromUrl(page.page_url) || "Primary page",
+      page_id: page.page_id,
+      page_url: page.page_url,
+      surface_bbox_in_viewport: { x: 0, y: 0, width: 100, height: 100 },
+      screenshot_refs: (pageScreenshots.get(page.page_url) || []).map((item) => ({ path: item })),
+      heat_zones: primaryHeatZones,
+      action_count: primaryClicks.length,
+      request_count: uniqueSorted(primaryClicks.flatMap((click) => click.request_signatures)).length,
+    });
+
+    const secondaryGroups = new Map<string, ClickTrace[]>();
+    for (const click of pageClicks) {
+      if (click.surface_kind === "primary_page") continue;
+      const key = click.surface_id || normalizeIdentifier(`${click.surface_kind}:${page.page_id}:${click.surface_label || click.region}`);
+      secondaryGroups.set(key, [...(secondaryGroups.get(key) || []), click]);
+    }
+    for (const [surfaceId, rows] of secondaryGroups.entries()) {
+      const first = rows[0];
+      surfaces.push({
+        surface_id: surfaceId,
+        surface_kind: first.surface_kind,
+        label: first.surface_label || first.region || first.surface_kind,
+        page_id: page.page_id,
+        page_url: page.page_url,
+        surface_bbox_in_viewport: first.surface_bbox_in_viewport,
+        screenshot_refs: (pageScreenshots.get(page.page_url) || []).map((item) => ({ path: item })),
+        heat_zones: buildSurfaceHeatZones(surfaceId, rows),
+        action_count: rows.length,
+        request_count: uniqueSorted(rows.flatMap((click) => click.request_signatures)).length,
+      });
+    }
+  }
+  return surfaces.sort((left, right) => right.action_count - left.action_count || left.surface_kind.localeCompare(right.surface_kind));
 }
 
 function topValues(values: string[], limit: number): string[] {
@@ -579,6 +784,7 @@ export async function finalizeCapture(store: KnowledgeStore, runId: string, llmC
   if (events.length === 0) throw new Error(`no capture events found for ${runId}`);
 
   const now = utcNowIso();
+  const learningScope = learningScopeFromRun(run);
   const urlHistory: string[] = [];
   const pageElements = new Map<string, Map<string, ElementAsset>>();
   const pageLayoutRegions = new Map<string, RegionPartition[]>();
@@ -586,19 +792,25 @@ export async function finalizeCapture(store: KnowledgeStore, runId: string, llmC
   const requestMap = new Map<string, RequestRecordDraft>();
   const clicks: ClickTrace[] = [];
   let latestUrl = run.current_url || run.url;
+  let latestLearnedUrl = run.entry_url || run.url;
 
   events.forEach((event, index) => {
     const type = event.event_type.toLowerCase();
     const payload = event.payload || {};
     const pageUrl = eventUrl(event) || latestUrl || run.url;
+    const pageInScope = urlInLearningScope(pageUrl, learningScope);
     const eventTs = event.ts || now;
     const eventTsMs = tsMs(eventTs, index + 1);
     if (pageUrl) {
       latestUrl = pageUrl;
-      if (!urlHistory.includes(pageUrl)) urlHistory.push(pageUrl);
+      if (pageInScope) {
+        latestLearnedUrl = pageUrl;
+        if (!urlHistory.includes(pageUrl)) urlHistory.push(pageUrl);
+      }
     }
 
     if (type.startsWith("visual_snapshot")) {
+      if (!pageInScope) return;
       const ref = String(payload.storage_ref || payload.path || payload.image_path || "").trim();
       if (ref) {
         const list = pageScreenshots.get(pageUrl) || [];
@@ -608,6 +820,7 @@ export async function finalizeCapture(store: KnowledgeStore, runId: string, llmC
     }
 
     if (type === "layout_snapshot") {
+      if (!pageInScope) return;
       const regions = parseRegionPartitions(payload);
       if (regions.length) {
         const existing = pageLayoutRegions.get(pageUrl) || [];
@@ -616,6 +829,7 @@ export async function finalizeCapture(store: KnowledgeStore, runId: string, llmC
     }
 
     if (["ui_click", "ui_input", "ui_change", "ui_submit", "ui_state_change", "ui_pointer_start", "ui_pointer_end", "ui_keydown", "ui_select"].includes(type)) {
+      if (!pageInScope) return;
       const directText = String(payload.direct_text || "").trim();
       const label = directText || String(payload.label || payload.text || payload.aria_label || "unknown").trim() || "unknown";
       const region = String(payload.region || "").trim() || inferRegion(payload);
@@ -625,6 +839,17 @@ export async function finalizeCapture(store: KnowledgeStore, runId: string, llmC
       const styles = payload.computed_styles && typeof payload.computed_styles === "object"
         ? payload.computed_styles as Record<string, unknown>
         : undefined;
+      const pageId = pageIdFromUrl(pageUrl);
+      const primarySurfaceId = normalizeIdentifier(`primary:${pageId}`);
+      const rawSurfaceKind = String(payload.surface_kind || "primary_page");
+      const surfaceKind: PageSurface["surface_kind"] = rawSurfaceKind === "secondary_surface" || rawSurfaceKind === "child_window_surface"
+        ? rawSurfaceKind
+        : "primary_page";
+      const surfaceId = normalizeIdentifier(String(payload.surface_id || primarySurfaceId), primarySurfaceId);
+      const surfaceBboxInViewport = surfaceKind === "primary_page"
+        ? { x: 0, y: 0, width: 100, height: 100 }
+        : percentBboxFrom(payload.surface_bbox_in_viewport, { x: 0, y: 0, width: 100, height: 100 });
+      const surfaceBbox = percentBboxFrom(payload.surface_bbox, defaultActionSurfaceBbox(payload));
       const elementId = stableElementId({
         systemKey: run.system_key,
         pageUrl,
@@ -641,7 +866,7 @@ export async function finalizeCapture(store: KnowledgeStore, runId: string, llmC
       const actions = new Set([...(existing?.action_types || []), ...eventAction(type)]);
       bucket.set(key, {
         element_id: elementId,
-        page_id: pageIdFromUrl(pageUrl),
+        page_id: pageId,
         label,
         selector: buildSelectorHint(payload),
         role: String(payload.role || "").trim(),
@@ -682,6 +907,11 @@ export async function finalizeCapture(store: KnowledgeStore, runId: string, llmC
         y_pct: Number(payload.y_pct || 0),
         w_pct: Number(payload.w_pct || 0),
         h_pct: Number(payload.h_pct || 0),
+        surface_id: surfaceId,
+        surface_kind: surfaceKind,
+        surface_label: String(payload.surface_label || "").trim(),
+        surface_bbox: surfaceBbox,
+        surface_bbox_in_viewport: surfaceBboxInViewport,
         region_bbox: regionBbox || {},
         style_fingerprint: styles ? styleFingerprint(styles) : "",
         direct_text: directText,
@@ -699,6 +929,7 @@ export async function finalizeCapture(store: KnowledgeStore, runId: string, llmC
       } catch {
         return;
       }
+      if (!pageInScope || !urlInLearningScope(rawUrl, learningScope)) return;
       const method = String(payload.method || "GET").toUpperCase();
       const resourceType = String(payload.resource_type || "").toLowerCase();
       const pathTemplate = normalizePathTemplate(parsed.pathname || "/");
@@ -764,9 +995,9 @@ export async function finalizeCapture(store: KnowledgeStore, runId: string, llmC
     }
   });
 
-  assignNextPages(clicks, latestUrl);
+  assignNextPages(clicks, latestLearnedUrl);
   const recordedActions = dropDuplicateSubmitActions(dropTextFocusActions(foldTextEntryActions(clicks)));
-  assignNextPages(recordedActions, latestUrl);
+  assignNextPages(recordedActions, latestLearnedUrl);
 
   const requests = [...requestMap.values()]
     .map(({ page_urls: pageUrls, status_codes: _codes, ...record }) => {
@@ -781,7 +1012,9 @@ export async function finalizeCapture(store: KnowledgeStore, runId: string, llmC
     })
     .sort((a, b) => b.occurrence - a.occurrence);
   const allElements = [...pageElements.values()].flatMap((bucket) => [...bucket.values()]);
-  const pages: PageMapPage[] = [...new Set([run.entry_url || run.url, ...urlHistory])].filter(Boolean).map((pageUrl) => {
+  const pages: PageMapPage[] = [...new Set([run.entry_url || run.url, ...urlHistory])]
+    .filter((pageUrl) => Boolean(pageUrl) && urlInLearningScope(pageUrl, learningScope))
+    .map((pageUrl) => {
     const elements = [...(pageElements.get(pageUrl)?.values() || [])];
     const pageId = pageIdFromUrl(pageUrl);
     const regionPartitions = pageLayoutRegions.get(pageUrl) || [];
@@ -819,6 +1052,8 @@ export async function finalizeCapture(store: KnowledgeStore, runId: string, llmC
       page_description: "",
     };
   });
+  const sortedPages = pages.sort((a, b) => b.request_count - a.request_count);
+  const surfaces = buildPageSurfaces(sortedPages, recordedActions, pageScreenshots);
 
   const evidenceIndex: EvidenceIndexArtifact = {
     generated_at: now,
@@ -848,7 +1083,8 @@ export async function finalizeCapture(store: KnowledgeStore, runId: string, llmC
     source_system: run.system_key,
     source_url: run.entry_url || run.url,
     url_history: urlHistory,
-    pages: pages.sort((a, b) => b.request_count - a.request_count),
+    pages: sortedPages,
+    surfaces,
     navigation_edges: buildNavigationEdges(run, recordedActions),
     confidence: allElements.length ? 0.82 : 0.55,
   };
@@ -905,6 +1141,15 @@ export async function finalizeCapture(store: KnowledgeStore, runId: string, llmC
     label: click.label,
     event_type: click.event_type,
     request_signatures: click.request_signatures,
+    x_pct: click.x_pct,
+    y_pct: click.y_pct,
+    w_pct: click.w_pct,
+    h_pct: click.h_pct,
+    surface_id: click.surface_id,
+    surface_kind: click.surface_kind,
+    surface_label: click.surface_label,
+    surface_bbox: click.surface_bbox,
+    surface_bbox_in_viewport: click.surface_bbox_in_viewport,
     next_page_url: click.next_page || click.page_url,
     next_page_id: pageIdFromUrl(click.next_page || click.page_url),
     evidence_refs: click.evidence_refs,
@@ -1034,6 +1279,7 @@ export async function finalizeCapture(store: KnowledgeStore, runId: string, llmC
       rules: actionRules.rules.length,
       recipe_steps: recipePack.steps.length,
       heat_zones: pageMap.pages.reduce((sum, page) => sum + page.heat_zones.length, 0),
+      surfaces: pageMap.surfaces.length,
     },
     artifacts: {
       evidence_index: "artifacts/evidence_index.json",
@@ -1139,6 +1385,7 @@ export async function mergeSystem(store: KnowledgeStore, systemKey: string, llmC
     artifact_type: "page_map",
     system_key: systemKey,
     pages: mergePageMapPages(pageMaps.flatMap((item) => item.pages)),
+    surfaces: mergePageSurfaces(pageMaps.flatMap((item) => item.surfaces || [])),
     navigation_edges: dedupeBy(pageMaps.flatMap((item) => item.navigation_edges || []), (item) => item.edge_id),
     url_history: uniqueSorted(pageMaps.flatMap((item) => item.url_history)),
   };
@@ -1239,6 +1486,25 @@ function mergePageMapPages(pages: PageMapPage[]): PageMapPage[] {
       evidence_refs: uniqueSorted(rows.flatMap((page) => page.evidence_refs || [])),
     };
   }).sort((left, right) => right.request_count - left.request_count);
+}
+
+function mergePageSurfaces(surfaces: PageSurface[]): PageSurface[] {
+  const grouped = new Map<string, PageSurface[]>();
+  for (const surface of surfaces) {
+    const rows = grouped.get(surface.surface_id) || [];
+    rows.push(surface);
+    grouped.set(surface.surface_id, rows);
+  }
+  return [...grouped.values()].map((rows) => {
+    const first = rows[0];
+    return {
+      ...first,
+      screenshot_refs: rows.flatMap((surface) => surface.screenshot_refs || []),
+      heat_zones: rows.flatMap((surface) => surface.heat_zones || []),
+      action_count: rows.reduce((sum, surface) => sum + Number(surface.action_count || 0), 0),
+      request_count: rows.reduce((sum, surface) => sum + Number(surface.request_count || 0), 0),
+    };
+  }).sort((left, right) => right.action_count - left.action_count || left.surface_id.localeCompare(right.surface_id));
 }
 
 function mergeHeatZones(zones: HeatZone[]): HeatZone[] {

@@ -181,7 +181,8 @@ async function getLearnedArtifacts(inputRunId?: string): Promise<Record<string, 
       success: true,
       runId: "",
       title: "No learned artifacts yet",
-      counts: { pages: 0, modules: 0, requests: 0, rules: 0, recipeSteps: 0 },
+      counts: { surfaces: 0, pages: 0, modules: 0, requests: 0, rules: 0, recipeSteps: 0 },
+      surfaces: [],
       pages: [],
       modules: [],
       requests: [],
@@ -208,6 +209,29 @@ async function getLearnedArtifacts(inputRunId?: string): Promise<Record<string, 
     requests: numberValue(page.request_count),
     screenshotPath: latestScreenshotPath(page),
   }));
+  const surfaces = records(pageMap.surfaces).map((surface) => {
+    const surfaceBBox = record(surface.surface_bbox_in_viewport);
+    return {
+      id: text(surface.surface_id),
+      kind: text(surface.surface_kind || "primary_page"),
+      label: text(surface.label || surface.surface_kind || "surface"),
+      pageId: text(surface.page_id),
+      pageUrl: text(surface.page_url),
+      surfaceBboxInViewport: surfaceBBox,
+      heatZones: records(surface.heat_zones).length,
+      actions: numberValue(surface.action_count),
+      requests: numberValue(surface.request_count),
+      screenshotPath: latestScreenshotPath(surface),
+      screenshotUrl: fileUrl(latestScreenshotPath(surface)),
+      overlays: records(surface.heat_zones).map((zone) => ({
+        label: stringList(zone.top_labels)[0] || text(zone.region) || "action",
+        region: text(zone.region),
+        count: numberValue(zone.event_count),
+        surfaceBbox: record(zone.bbox_pct),
+        bbox: viewportBbox(surfaceBBox, record(zone.bbox_pct)),
+      })).slice(0, 16),
+    };
+  });
   const modules = records(businessCatalog.modules).map((module) => ({
     id: text(module.module_id),
     title: text(module.title || module.module_id),
@@ -247,6 +271,7 @@ async function getLearnedArtifacts(inputRunId?: string): Promise<Record<string, 
     preview: await learnedPreview(run.run_id, pageMap),
     counts: {
       pages: pages.length,
+      surfaces: surfaces.length,
       modules: modules.length,
       requests: requests.length,
       rules: rules.length,
@@ -254,6 +279,7 @@ async function getLearnedArtifacts(inputRunId?: string): Promise<Record<string, 
       screenshots: numberValue(record(summary.counts).screenshots),
       actions: numberValue(record(summary.counts).actions || recipeSteps.length),
     },
+    surfaces: surfaces.slice(0, 16),
     pages: pages.slice(0, 12),
     modules: modules.slice(0, 12),
     requests: requests.slice(0, 16),
@@ -273,6 +299,36 @@ async function getLearnedArtifacts(inputRunId?: string): Promise<Record<string, 
 }
 
 async function learnedPreview(runId: string, pageMap: Record<string, unknown>): Promise<Record<string, unknown>> {
+  const surfaces = records(pageMap.surfaces);
+  const surfaceWithShot = surfaces.find((surface) => latestScreenshotPath(surface) && records(surface.heat_zones).length)
+    || surfaces.find((surface) => latestScreenshotPath(surface));
+  if (surfaceWithShot) {
+    const screenshotPath = latestScreenshotPath(surfaceWithShot);
+    const surfaceBBox = record(surfaceWithShot.surface_bbox_in_viewport);
+    const surfaceKind = text(surfaceWithShot.surface_kind || "surface");
+    return {
+      mode: "surface",
+      surfaceId: text(surfaceWithShot.surface_id),
+      surfaceKind,
+      surfaceLabel: text(surfaceWithShot.label || surfaceKind),
+      pageId: text(surfaceWithShot.page_id),
+      pageUrl: text(surfaceWithShot.page_url),
+      screenshotPath,
+      screenshotUrl: fileUrl(screenshotPath),
+      heatZones: records(surfaceWithShot.heat_zones).map((zone) => ({
+        label: stringList(zone.top_labels)[0] || text(zone.region) || "action",
+        region: text(zone.region),
+        count: numberValue(zone.event_count),
+        surfaceBbox: record(zone.bbox_pct),
+        bbox: viewportBbox(surfaceBBox, record(zone.bbox_pct)),
+      })).slice(0, 16),
+      regions: surfaceKind === "primary_page" ? [] : [{
+        label: text(surfaceWithShot.label || surfaceKind),
+        bbox: surfaceBBox,
+      }],
+    };
+  }
+
   const pages = records(pageMap.pages);
   const pageWithShot = pages.find((page) => latestScreenshotPath(page))
     || pages.find((page) => records(page.heat_zones).length)
@@ -377,6 +433,19 @@ function numberValue(value: unknown): number {
 function latestScreenshotPath(page: Record<string, unknown>): string {
   const screenshots = records(page.screenshot_refs);
   return text(screenshots.at(-1)?.path || screenshots.at(-1)?.ref);
+}
+
+function viewportBbox(surfaceBbox: Record<string, unknown>, zoneBbox: Record<string, unknown>): Record<string, number> {
+  const sx = numberValue(surfaceBbox.x);
+  const sy = numberValue(surfaceBbox.y);
+  const sw = numberValue(surfaceBbox.width) || 100;
+  const sh = numberValue(surfaceBbox.height) || 100;
+  return {
+    x: sx + numberValue(zoneBbox.x) * sw / 100,
+    y: sy + numberValue(zoneBbox.y) * sh / 100,
+    width: numberValue(zoneBbox.width) * sw / 100,
+    height: numberValue(zoneBbox.height) * sh / 100,
+  };
 }
 
 function fileUrl(filePath: string): string {

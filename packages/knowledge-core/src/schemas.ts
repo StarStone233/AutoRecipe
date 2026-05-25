@@ -114,6 +114,15 @@ export const RegionPartitionSchema = z.object({
 
 export type RegionPartition = z.infer<typeof RegionPartitionSchema>;
 
+export const PercentBboxSchema = z.object({
+  x: z.number(),
+  y: z.number(),
+  width: z.number(),
+  height: z.number(),
+});
+
+export type PercentBbox = z.infer<typeof PercentBboxSchema>;
+
 export const RequestRecordSchema = z.object({
   signature: z.string(),
   method: z.string(),
@@ -247,6 +256,36 @@ export const NavigationEdgeSchema = z.object({
 
 export type NavigationEdge = z.infer<typeof NavigationEdgeSchema>;
 
+export const PageSurfaceSchema = z.object({
+  surface_id: z.string(),
+  surface_kind: z.enum(["primary_page", "secondary_surface", "child_window_surface"]).default("primary_page"),
+  label: z.string().default(""),
+  page_id: z.string(),
+  page_url: z.string(),
+  surface_bbox_in_viewport: PercentBboxSchema.default({ x: 0, y: 0, width: 100, height: 100 }),
+  screenshot_refs: z.array(z.record(z.unknown())).default([]),
+  heat_zones: z.array(z.object({
+    zone_id: z.string(),
+    surface_id: z.string(),
+    region: z.string().default("main_content"),
+    center: z.object({
+      x_pct: z.number(),
+      y_pct: z.number(),
+    }),
+    bbox_pct: PercentBboxSchema,
+    event_count: z.number().default(0),
+    action_types: z.array(z.string()).default([]),
+    top_labels: z.array(z.string()).default([]),
+    request_signatures: z.array(z.string()).default([]),
+    evidence_refs: z.array(z.string()).default([]),
+    confidence: z.number().default(0.6),
+  })).default([]),
+  action_count: z.number().default(0),
+  request_count: z.number().default(0),
+});
+
+export type PageSurface = z.infer<typeof PageSurfaceSchema>;
+
 export const PageMapArtifactSchema = z.object({
   generated_at: z.string(),
   schema_version: z.string().default("v1"),
@@ -256,6 +295,7 @@ export const PageMapArtifactSchema = z.object({
   source_url: z.string(),
   url_history: z.array(z.string()).default([]),
   pages: z.array(PageMapPageSchema).default([]),
+  surfaces: z.array(PageSurfaceSchema).default([]),
   navigation_edges: z.array(NavigationEdgeSchema).default([]),
   confidence: z.number().default(0.7),
 });
@@ -371,6 +411,15 @@ export const ActionTraceStepSchema = z.object({
   label: z.string().default(""),
   event_type: z.string().default("ui_click"),
   request_signatures: z.array(z.string()).default([]),
+  x_pct: z.number().default(0),
+  y_pct: z.number().default(0),
+  w_pct: z.number().default(0),
+  h_pct: z.number().default(0),
+  surface_id: z.string().default(""),
+  surface_kind: z.enum(["primary_page", "secondary_surface", "child_window_surface"]).default("primary_page"),
+  surface_label: z.string().default(""),
+  surface_bbox: PercentBboxSchema.default({ x: 0, y: 0, width: 0, height: 0 }),
+  surface_bbox_in_viewport: PercentBboxSchema.default({ x: 0, y: 0, width: 100, height: 100 }),
   next_page_url: z.string().default(""),
   next_page_id: z.string().default(""),
   evidence_refs: z.array(z.string()).default([]),

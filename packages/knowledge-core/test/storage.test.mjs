@@ -524,6 +524,107 @@ test("finalizeCapture folds IME intermediate input into final text step", async 
   }
 });
 
+test("finalizeCapture keeps learned data inside site scope and groups secondary surfaces", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "autorecipe-scope-surface-"));
+  try {
+    const store = new KnowledgeStore(dir);
+    const run = await store.createRun({ targetUrl: "https://cn.bing.com", authStatus: "not_required" });
+    const pageUrl = "https://cn.bing.com/";
+    const externalUrl = "https://login.live.com/oauth";
+
+    await store.appendEvents(run.run_id, [
+      {
+        event_type: "page_loaded",
+        url: pageUrl,
+        ts: "2026-05-24T02:00:00.000Z",
+        payload: { tab_id: 2, page_url: pageUrl },
+      },
+      {
+        event_type: "visual_snapshot",
+        url: pageUrl,
+        ts: "2026-05-24T02:00:00.200Z",
+        payload: { tab_id: 2, page_url: pageUrl, storage_ref: path.join(dir, "bing-shot.png") },
+      },
+      {
+        event_type: "ui_click",
+        url: pageUrl,
+        ts: "2026-05-24T02:00:01.000Z",
+        payload: {
+          tab_id: 2,
+          page_url: pageUrl,
+          label: "搜索选项",
+          region: "top_bar",
+          x_pct: 72,
+          y_pct: 18,
+          w_pct: 8,
+          h_pct: 5,
+          surface_id: "surface_search_options",
+          surface_kind: "secondary_surface",
+          surface_label: "搜索选项弹窗",
+          surface_bbox_in_viewport: { x: 62, y: 10, width: 30, height: 35 },
+          surface_bbox: { x: 20, y: 25, width: 12, height: 10 },
+        },
+      },
+      {
+        event_type: "network_completed",
+        url: "https://cn.bing.com/search?q=test",
+        ts: "2026-05-24T02:00:02.000Z",
+        payload: {
+          tab_id: 2,
+          page_url: pageUrl,
+          url: "https://cn.bing.com/search?q=test",
+          method: "GET",
+          status_code: 200,
+          resource_type: "xhr",
+        },
+      },
+      {
+        event_type: "network_completed",
+        url: "https://login.live.com/api/session",
+        ts: "2026-05-24T02:00:02.100Z",
+        payload: {
+          tab_id: 2,
+          page_url: pageUrl,
+          url: "https://login.live.com/api/session",
+          method: "POST",
+          status_code: 200,
+          resource_type: "xhr",
+        },
+      },
+      {
+        event_type: "page_loaded",
+        url: externalUrl,
+        ts: "2026-05-24T02:00:03.000Z",
+        payload: { tab_id: 2, page_url: externalUrl },
+      },
+      {
+        event_type: "ui_click",
+        url: externalUrl,
+        ts: "2026-05-24T02:00:04.000Z",
+        payload: { tab_id: 2, page_url: externalUrl, label: "登录", region: "main_content", x_pct: 50, y_pct: 50 },
+      },
+    ]);
+
+    const result = await finalizeCapture(store, run.run_id);
+    const secondary = result.pageMap.surfaces.find((surface) => surface.surface_id === "surface_search_options");
+
+    assert.deepEqual(result.pageMap.url_history, [pageUrl]);
+    assert.equal(result.pageMap.pages.some((page) => page.page_url === externalUrl), false);
+    assert.deepEqual(result.requestCatalog.requests.map((request) => request.host), ["cn.bing.com"]);
+    assert.equal(result.evidenceIndex.raw_event_count, 7);
+    assert.ok(secondary);
+    assert.equal(secondary.surface_kind, "secondary_surface");
+    assert.equal(secondary.label, "搜索选项弹窗");
+    assert.deepEqual(secondary.surface_bbox_in_viewport, { x: 62, y: 10, width: 30, height: 35 });
+    assert.deepEqual(secondary.heat_zones[0].bbox_pct, { x: 20, y: 25, width: 12, height: 10 });
+    assert.equal(result.actionTrace.actions[0].surface_id, "surface_search_options");
+    assert.equal(result.actionTrace.actions[0].surface_kind, "secondary_surface");
+    assert.equal(result.elementMap.elements.some((element) => element.label === "登录"), false);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test("mergeSystem excludes interrupted auth runs from baseline and run count", async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), "autorecipe-merge-auth-skip-"));
   try {
